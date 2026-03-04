@@ -1,6 +1,21 @@
-"""Application configuration loaded from environment variables."""
+"""Application configuration loaded from .env file or Streamlit secrets."""
+import os
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _inject_streamlit_secrets() -> None:
+    """Copy Streamlit secrets into environment variables if running on Streamlit Cloud."""
+    try:
+        import streamlit as st
+        for key, value in st.secrets.items():
+            if isinstance(value, str):
+                os.environ.setdefault(key.upper(), value)
+    except Exception:
+        pass
+
+
+_inject_streamlit_secrets()
 
 
 class Settings(BaseSettings):
@@ -14,7 +29,7 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./learn_ai.db"
 
-    # Groq (required for the generation engine)
+    # Groq (required for the agent)
     groq_api_key: Optional[str] = None
     groq_model: str = "llama3-70b-8192"
 
@@ -23,7 +38,7 @@ class Settings(BaseSettings):
     notion_root_page_id: Optional[str] = None
 
     # Application
-    app_env: str = "production"
+    app_env: str = "development"
     log_level: str = "INFO"
 
     @property
