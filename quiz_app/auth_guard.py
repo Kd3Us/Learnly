@@ -79,7 +79,7 @@ def require_auth() -> None:
             st.spinner("Connexion en cours...")
             st.rerun()
         st.warning("Vous devez être connecté pour accéder à cette page.")
-        st.page_link("pages/5_Login.py", label="Se connecter", icon="🔑")
+        st.page_link("pages/5_login.py", label="Se connecter", icon="🔑")
         st.stop()
 
 
