@@ -65,9 +65,9 @@ def current_user_id() -> str | None:
 
 def require_auth() -> None:
     """
-    Redirect to the login page if no user is in session.
-    If an OAuth callback is in progress, process it first before redirecting.
-    Call this at the top of every protected page.
+    Block access if no user is in session and show a login link.
+    Uses st.stop() instead of st.switch_page() to avoid StreamlitAPIException
+    on Streamlit Cloud.
     """
     load_user_from_callback()
 
@@ -78,7 +78,9 @@ def require_auth() -> None:
         if st.query_params.get("code"):
             st.spinner("Connexion en cours...")
             st.rerun()
-        st.switch_page("pages/5_Login.py")
+        st.warning("Vous devez être connecté pour accéder à cette page.")
+        st.page_link("pages/5_Login.py", label="Se connecter", icon="🔑")
+        st.stop()
 
 
 # ---------------------------------------------------------------------------
