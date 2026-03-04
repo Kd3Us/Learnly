@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -97,7 +98,6 @@ def _call_groq(
     )
     raw = (response.choices[0].message.content or "").strip()
 
-    # Strip markdown code fences if the model wrapped its response
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[-1] if "\n" in raw else raw
         raw = raw.rsplit("```", 1)[0].strip()
@@ -112,7 +112,7 @@ def run_agent(
     on_tool_result: Optional[Callable[[str, str], None]] = None,
     publish_to_notion: bool = False,
 ) -> str:
-    """Process a course creation request using tool calls (direct mode)."""
+    """Process a course creation request using tool calls."""
     if not settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY is not set.")
 
@@ -192,7 +192,7 @@ def run_agent(
 
 
 def _analyze_course_structure(content: str, course_title: str, level: str) -> dict:
-    """Ask the model to propose a module/lesson structure for the given content."""
+    """Propose a module/lesson structure for the given content."""
     nb_chars = len(content)
     content_preview = content[:3000]
 
@@ -213,7 +213,7 @@ def _analyze_course_structure(content: str, course_title: str, level: str) -> di
             f"at {level} level.\n\n"
             f"{hint}\n\n"
             f"Respond ONLY with this JSON format:\n"
-            f'{{"modules": [{{"title": "Module name", "num_lessons": 2, "focus": "Key topic"}}]}}\n\n'
+            f'{"{"}"modules": [{{"title": "Module name", "num_lessons": 2, "focus": "Key topic"}}]{"}"}\n\n'
             f"Content preview:\n{content_preview}"
         ),
         max_tokens=600,
@@ -408,7 +408,7 @@ def run_agent_chunked(
     if on_chunk_start:
         on_chunk_start(0, 1)
 
-    notify("Analysing content to determine optimal structure...")
+    notify("Analyse du contenu en cours...")
 
     structure = _analyze_course_structure(
         content=content,
@@ -419,13 +419,13 @@ def run_agent_chunked(
     total_steps = len(modules_plan) + 1
 
     notify(
-        f"Structure defined: {len(modules_plan)} module(s) — "
+        f"Structure définie : {len(modules_plan)} module(s) — "
         + ", ".join(
-            f"{m['title']} ({m['num_lessons']} lesson(s))" for m in modules_plan
+            f"{m['title']} ({m['num_lessons']} leçon(s))" for m in modules_plan
         )
     )
 
-    notify(f"Creating course \"{course_title}\" in database...")
+    notify(f"Création du cours \"{course_title}\" en base de données...")
 
     if on_tool_call:
         on_tool_call("manage_curriculum", {"action": "create_course", "title": course_title})
@@ -435,7 +435,7 @@ def run_agent_chunked(
         title=course_title,
         topic=course_title,
         level=level,
-        goal=f"Master the concepts of {course_title}",
+        goal=f"Maîtriser les concepts de {course_title}",
         hours_per_week=5,
         user_id=user_id,
     )
@@ -445,7 +445,7 @@ def run_agent_chunked(
 
     course_id = course_result.get("id")
     if not course_id:
-        raise RuntimeError("Failed to create course in database.")
+        raise RuntimeError("Échec de la création du cours en base de données.")
 
     module_ids = []
     module_titles = []
@@ -475,9 +475,9 @@ def run_agent_chunked(
             module_lesson_counts.append(n_lessons)
 
     if not module_ids:
-        raise RuntimeError("No modules created.")
+        raise RuntimeError("Aucun module créé.")
 
-    notify(f"Structure created: {len(module_ids)} module(s)")
+    notify(f"Structure créée : {len(module_ids)} module(s)")
 
     chunks = _split_into_chunks(content, len(module_ids))
     total_lessons_created = 0
@@ -488,10 +488,10 @@ def run_agent_chunked(
         if on_chunk_start:
             on_chunk_start(mod_i + 1, total_steps)
 
-        notify(f"Module {mod_i + 1}/{len(module_ids)}: {module_title} ({n_lessons} lesson(s))")
+        notify(f"Module {mod_i + 1}/{len(module_ids)} : {module_title} ({n_lessons} leçon(s))")
 
         for lesson_i in range(n_lessons):
-            notify(f"  Lesson {lesson_i + 1}/{n_lessons}...")
+            notify(f"  Leçon {lesson_i + 1}/{n_lessons}...")
 
             lesson_data = _generate_lesson_content(
                 chunk=chunk,
@@ -503,7 +503,7 @@ def run_agent_chunked(
                 pause=pause_between_chunks,
             )
 
-            lesson_title = lesson_data.get("title", f"Lesson {lesson_i + 1} — {module_title}")
+            lesson_title = lesson_data.get("title", f"Leçon {lesson_i + 1} — {module_title}")
             lesson_objective = lesson_data.get("objective", "")
             lesson_content_text = lesson_data.get("content", "")
 
@@ -528,10 +528,9 @@ def run_agent_chunked(
 
             lesson_id = lesson_result.get("id")
             if not lesson_id:
-                notify("  Lesson not created, skipping.")
+                notify("  Leçon non créée, passage à la suivante.")
                 continue
 
-            # Generate and store flashcards
             flashcards = _generate_flashcards(lesson_title, lesson_content_text, pause_between_chunks)
             if flashcards:
                 fc_result = manage_flashcards(
@@ -542,7 +541,6 @@ def run_agent_chunked(
                 if on_tool_result:
                     on_tool_result("manage_flashcards", json.dumps(fc_result))
 
-            # Generate and store quiz questions
             quiz_questions = _generate_quiz(lesson_title, lesson_content_text, pause_between_chunks)
             if quiz_questions:
                 quiz_result = manage_quiz(
@@ -556,19 +554,19 @@ def run_agent_chunked(
             total_lessons_created += 1
 
     if publish_to_notion and course_id:
-        notify("Publishing to Notion...")
+        notify("Publication sur Notion...")
         try:
             notion_result = manage_notion_page(
                 action="publish_course",
                 course_id=course_id,
             )
-            notify(f"Published to Notion: {notion_result.get('pages_created', 0)} pages created.")
+            notify(f"Publié sur Notion : {notion_result.get('pages_created', 0)} pages créées.")
         except Exception as exc:
-            notify(f"Notion publish failed: {exc}")
+            notify(f"Échec de la publication Notion : {exc}")
 
     summary = (
-        f"Course \"{course_title}\" created with {len(module_ids)} module(s) "
-        f"and {total_lessons_created} lesson(s)."
+        f"Cours \"{course_title}\" créé avec {len(module_ids)} module(s) "
+        f"et {total_lessons_created} leçon(s)."
     )
     notify(summary)
 

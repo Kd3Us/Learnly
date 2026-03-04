@@ -173,20 +173,15 @@ def _list(lesson_id: int, user_id: Optional[str] = None, **_: Any) -> dict:
     with get_db() as db:
         stmt = (
             select(QuizAttempt)
+            .join(Lesson, QuizAttempt.lesson_id == Lesson.id)
+            .join(Module, Lesson.module_id == Module.id)
+            .join(Course, Module.course_id == Course.id)
             .where(QuizAttempt.lesson_id == int(lesson_id))
             .order_by(QuizAttempt.created_at.desc())
         )
 
         if user_id:
-            stmt = (
-                select(QuizAttempt)
-                .join(Lesson, QuizAttempt.lesson_id == Lesson.id)
-                .join(Module, Lesson.module_id == Module.id)
-                .join(Course, Module.course_id == Course.id)
-                .where(QuizAttempt.lesson_id == int(lesson_id))
-                .where(Course.user_id == user_id)
-                .order_by(QuizAttempt.created_at.desc())
-            )
+            stmt = stmt.where(Course.user_id == user_id)
 
         attempts = db.scalars(stmt).all()
         results = [_attempt_to_dict(a, include_questions=False) for a in attempts]

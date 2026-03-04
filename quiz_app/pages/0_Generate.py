@@ -3,18 +3,19 @@
 User pastes text or uploads a PDF.
 The app structures the course and generates flashcards + quiz from that content.
 The number of modules and lessons is determined automatically by the model.
-
-Location: quiz_app/pages/0_Generate.py
 """
-import sys
+import io
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-import io
 import streamlit as st
-from database import init_db
+
+from agent import run_agent_chunked
+from auth_guard import current_user_id, render_sidebar_user, require_auth
 from config import settings
-from auth_guard import require_auth, render_sidebar_user, current_user_id
+from database import init_db
 
 init_db()
 
@@ -24,6 +25,10 @@ require_auth()
 render_sidebar_user()
 
 st.title("Create a course")
+
+CHUNK_THRESHOLD = 4000
+
+level_map = {"Beginner": "beginner", "Intermediate": "intermediate", "Advanced": "advanced"}
 
 
 def _sync_secrets_to_settings() -> None:
@@ -37,21 +42,6 @@ def _sync_secrets_to_settings() -> None:
             settings.groq_model = model
     except Exception:
         pass
-
-
-_sync_secrets_to_settings()
-
-if not settings.groq_api_key:
-    st.error(
-        "**GROQ_API_KEY missing.**\n\n"
-        "Add your key to the `.env` file:\n```\nGROQ_API_KEY=your_key_here\n```\n\n"
-        "Free key available at [console.groq.com](https://console.groq.com)."
-    )
-    st.stop()
-
-CHUNK_THRESHOLD = 4000
-
-level_map = {"Beginner": "beginner", "Intermediate": "intermediate", "Advanced": "advanced"}
 
 
 def extract_pdf_text(uploaded_file) -> str:
@@ -135,9 +125,16 @@ def _display_generation(agent_fn) -> None:
         status_placeholder.error(f"An error occurred: {e}")
 
 
-# ---------------------------------------------------------------------------
-# Main form
-# ---------------------------------------------------------------------------
+_sync_secrets_to_settings()
+
+if not settings.groq_api_key:
+    st.error(
+        "**GROQ_API_KEY missing.**\n\n"
+        "Add your key to the `.env` file:\n```\nGROQ_API_KEY=your_key_here\n```\n\n"
+        "Free key available at [console.groq.com](https://console.groq.com)."
+    )
+    st.stop()
+
 st.caption("Paste your content or upload a PDF. The app structures the course and generates flashcards and quiz.")
 
 course_title = st.text_input(
@@ -218,8 +215,6 @@ if launch_content:
             f"Generation in **{auto_modules + 1} steps** to respect API limits "
             f"(~1 minute wait between each step)."
         )
-
-    from agent import run_agent_chunked
 
     def _run(on_text, on_tool_call, on_tool_result):
         return run_agent_chunked(
