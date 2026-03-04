@@ -48,6 +48,13 @@ class Settings(BaseSettings):
 
 
 def get_settings() -> Settings:
+    """
+    Return a fresh Settings instance with Streamlit secrets injected.
+
+    Always call this inside Streamlit pages so that st.secrets is available.
+    The module-level `settings` singleton is reserved for non-Streamlit contexts
+    (database.py, tests, CLI tools).
+    """
     _load_streamlit_secrets()
     return Settings()
 
