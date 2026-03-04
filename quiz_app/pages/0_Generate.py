@@ -27,33 +27,23 @@ render_sidebar_user()
 st.title("Create a course")
 
 # ---------------------------------------------------------------------------
-# Résolution de la clé Groq — lit st.secrets en priorité (Streamlit Cloud),
-# puis os.environ / .env via settings. Injecte dans os.environ pour agent.py.
+# Patch settings avec st.secrets si la clé n'est pas déjà chargée.
+# Doit être fait AVANT tout import d'agent.py.
 # ---------------------------------------------------------------------------
-def _resolve_groq_key() -> str | None:
+def _patch_settings_from_secrets() -> None:
     try:
         key = st.secrets.get("GROQ_API_KEY") or st.secrets.get("groq_api_key")
-        if key:
-            os.environ["GROQ_API_KEY"] = key
-            return key
-    except Exception:
-        pass
-    return settings.groq_api_key
-
-def _resolve_groq_model() -> str:
-    try:
+        if key and not settings.groq_api_key:
+            settings.groq_api_key = key
         model = st.secrets.get("GROQ_MODEL") or st.secrets.get("groq_model")
         if model:
-            os.environ["GROQ_MODEL"] = model
-            return model
+            settings.groq_model = model
     except Exception:
         pass
-    return settings.groq_model
 
-_groq_api_key = _resolve_groq_key()
-_groq_model = _resolve_groq_model()
+_patch_settings_from_secrets()
 
-if not _groq_api_key:
+if not settings.groq_api_key:
     st.error(
         "**GROQ_API_KEY missing.**\n\n"
         "Add your key to the `.env` file:\n```\nGROQ_API_KEY=your_key_here\n```\n\n"
