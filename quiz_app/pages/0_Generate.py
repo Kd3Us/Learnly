@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import io
 import streamlit as st
 from database import init_db
-from config import settings, _load_streamlit_secrets
+from config import settings
 from auth_guard import require_auth, render_sidebar_user, current_user_id
 
 init_db()
@@ -25,15 +25,21 @@ render_sidebar_user()
 
 st.title("Create a course")
 
-# Reload secrets in case the page was loaded before Streamlit injected them
-_load_streamlit_secrets()
-# Re-instantiate settings to pick up any newly injected env vars
-from config import Settings as _Settings
-_fresh = _Settings()
-if _fresh.groq_api_key and not settings.groq_api_key:
-    settings.groq_api_key = _fresh.groq_api_key
-if _fresh.groq_model:
-    settings.groq_model = _fresh.groq_model
+
+def _sync_secrets_to_settings() -> None:
+    """Inject Streamlit secrets into the settings object if not already set."""
+    try:
+        key = st.secrets.get("GROQ_API_KEY") or st.secrets.get("groq_api_key")
+        if key and not settings.groq_api_key:
+            settings.groq_api_key = key
+        model = st.secrets.get("GROQ_MODEL") or st.secrets.get("groq_model")
+        if model:
+            settings.groq_model = model
+    except Exception:
+        pass
+
+
+_sync_secrets_to_settings()
 
 if not settings.groq_api_key:
     st.error(
