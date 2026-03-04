@@ -1,6 +1,6 @@
 """Course generation engine.
 
-Receives a user request, calls curriculum management tools,
+Receives raw content (text or PDF extract), calls the curriculum tools,
 and returns a summary of what was created.
 
 Used by quiz_app/pages/0_Generate.py
@@ -8,9 +8,10 @@ Used by quiz_app/pages/0_Generate.py
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from groq import Groq
 
@@ -25,15 +26,11 @@ from tools import (
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "agent.md"
 
-_TOOL_FORMAT_INSTRUCTION = (
-    "CRITICAL: Use ONLY the native tool_calls mechanism. "
-    "NEVER use XML or text to call tools.\n\n"
-)
-
 
 def _load_instructions() -> str:
-    base = _PROMPT_PATH.read_text(encoding="utf-8") if _PROMPT_PATH.exists() else "Tu es un tuteur pédagogique expert."
-    return _TOOL_FORMAT_INSTRUCTION + base
+    if _PROMPT_PATH.exists():
+        return _PROMPT_PATH.read_text(encoding="utf-8")
+    return "Tu es un tuteur pédagogique expert."
 
 
 def _to_groq_tools(schemas: list[dict]) -> list[dict]:
@@ -64,6 +61,7 @@ def _execute_tool(name: str, arguments: dict) -> str:
     fn = _TOOLS.get(name)
     if fn is None:
         return json.dumps({"error": f"Unknown tool: {name}"})
+
     if name == "manage_curriculum":
         for key in ("hours_per_week", "order_index"):
             if key in arguments:
@@ -71,6 +69,7 @@ def _execute_tool(name: str, arguments: dict) -> str:
                     arguments[key] = int(arguments[key])
                 except (ValueError, TypeError):
                     arguments[key] = 5 if key == "hours_per_week" else 0
+
     try:
         result = fn(**arguments)
         return json.dumps(result, ensure_ascii=False, default=str)
@@ -78,8 +77,12 @@ def _execute_tool(name: str, arguments: dict) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _llm_json(prompt: str, system: str | None = None, max_tokens: int = 1500) -> str:
-    """Simple LLM call returning raw text. Used for JSON generation without tool_calls."""
+def _call_groq(
+    prompt: str,
+    system: Optional[str] = None,
+    max_tokens: int = 1500,
+) -> str:
+    """Send a single prompt to Groq and return the raw text response."""
     client = Groq(api_key=settings.groq_api_key)
     messages = []
     if system:
@@ -93,20 +96,23 @@ def _llm_json(prompt: str, system: str | None = None, max_tokens: int = 1500) ->
         temperature=0.3,
     )
     raw = (response.choices[0].message.content or "").strip()
+
+    # Strip markdown code fences if the model wrapped its response
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[-1] if "\n" in raw else raw
         raw = raw.rsplit("```", 1)[0].strip()
+
     return raw
 
 
 def run_agent(
     user_message: str,
-    on_text: Callable[[str], None] | None = None,
-    on_tool_call: Callable[[str, dict], None] | None = None,
-    on_tool_result: Callable[[str, str], None] | None = None,
+    on_text: Optional[Callable[[str], None]] = None,
+    on_tool_call: Optional[Callable[[str, dict], None]] = None,
+    on_tool_result: Optional[Callable[[str, str], None]] = None,
     publish_to_notion: bool = False,
 ) -> str:
-    """Process a course creation request (direct mode)."""
+    """Process a course creation request using tool calls (direct mode)."""
     if not settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY is not set.")
 
@@ -186,9 +192,9 @@ def run_agent(
 
 
 def _analyze_course_structure(content: str, course_title: str, level: str) -> dict:
-    """Ask the LLM to propose an optimal module/lesson structure for the given content."""
-    content_preview = content[:3000]
+    """Ask the model to propose a module/lesson structure for the given content."""
     nb_chars = len(content)
+    content_preview = content[:3000]
 
     if nb_chars < 2000:
         hint = "Content is short (<2000 chars). Suggest 1-2 modules with 1-2 lessons each."
@@ -197,7 +203,7 @@ def _analyze_course_structure(content: str, course_title: str, level: str) -> di
     else:
         hint = "Content is long (>6000 chars). Suggest 3-4 modules with 2-3 lessons each."
 
-    raw = _llm_json(
+    raw = _call_groq(
         system=(
             "You are an expert instructional designer. "
             "Respond ONLY with valid JSON, no markdown wrapping."
@@ -224,16 +230,19 @@ def _analyze_course_structure(content: str, course_title: str, level: str) -> di
 
 
 def _split_into_chunks(content: str, num_chunks: int) -> list[str]:
-    """Split content into roughly equal chunks for parallel module generation."""
+    """Split content into roughly equal parts, cutting on paragraph boundaries."""
     if num_chunks <= 1:
         return [content]
-    chunk_size = max(len(content) // num_chunks, 500)
+
+    paragraphs = content.split("\n\n")
+    chunk_size = max(len(paragraphs) // num_chunks, 1)
     chunks = []
-    start = 0
+
     for i in range(num_chunks):
-        end = start + chunk_size if i < num_chunks - 1 else len(content)
-        chunks.append(content[start:end])
-        start = end
+        start = i * chunk_size
+        end = start + chunk_size if i < num_chunks - 1 else len(paragraphs)
+        chunks.append("\n\n".join(paragraphs[start:end]))
+
     return chunks
 
 
@@ -250,6 +259,8 @@ def _generate_lesson_content(
     time.sleep(pause)
 
     client = Groq(api_key=settings.groq_api_key)
+    extra_line = f"Instructions supplémentaires : {extra}\n" if extra else ""
+
     messages = [
         {
             "role": "system",
@@ -264,14 +275,14 @@ def _generate_lesson_content(
             "content": (
                 f"Génère la leçon {lesson_index + 1}/{num_lessons} "
                 f"pour le module \"{module_title}\" (niveau : {level}).\n\n"
-                f"Réponds en suivant EXACTEMENT ce format (remplace les crochets par le vrai contenu) :\n\n"
+                f"Réponds en suivant EXACTEMENT ce format :\n\n"
                 f"TITRE: [Titre précis et descriptif de la leçon]\n\n"
                 f"OBJECTIF: [L'étudiant sera capable de ...]\n\n"
                 f"CONTENU:\n"
-                f"[Contenu détaillé en markdown : utilise ## pour les sections, ### pour les sous-sections, "
-                f"- pour les listes, ``` pour le code. Minimum 400 mots. "
-                f"PAS de JSON, uniquement du texte et du markdown.]\n\n"
-                f"{'Instructions supplémentaires : ' + extra + chr(10) if extra else ''}"
+                f"[Contenu détaillé en markdown : utilise ## pour les sections, "
+                f"### pour les sous-sections, - pour les listes, ``` pour le code. "
+                f"Minimum 400 mots. PAS de JSON, uniquement du texte et du markdown.]\n\n"
+                f"{extra_line}"
                 f"Basé UNIQUEMENT sur ce contenu :\n{chunk[:4000]}"
             ),
         },
@@ -285,21 +296,19 @@ def _generate_lesson_content(
     )
     raw = (response.choices[0].message.content or "").strip()
 
-    import re as _re
-
     title = f"Leçon {lesson_index + 1} — {module_title}"
     objective = "Comprendre et appliquer les concepts clés de cette leçon."
     content_md = ""
 
-    m = _re.search(r'^TITRE\s*:\s*(.+)$', raw, _re.MULTILINE)
+    m = re.search(r'^TITRE\s*:\s*(.+)$', raw, re.MULTILINE)
     if m:
         title = m.group(1).strip()
 
-    m = _re.search(r'^OBJECTIF\s*:\s*(.+)$', raw, _re.MULTILINE)
+    m = re.search(r'^OBJECTIF\s*:\s*(.+)$', raw, re.MULTILINE)
     if m:
         objective = m.group(1).strip()
 
-    m = _re.search(r'^CONTENU\s*:\s*\n?(.*)', raw, _re.MULTILINE | _re.DOTALL)
+    m = re.search(r'^CONTENU\s*:\s*\n?(.*)', raw, re.MULTILINE | re.DOTALL)
     if m:
         content_md = m.group(1).strip()
 
@@ -310,8 +319,10 @@ def _generate_lesson_content(
 
 
 def _generate_flashcards(lesson_title: str, lesson_content: str, pause: float) -> list[dict]:
+    """Generate flashcard pairs for a lesson."""
     time.sleep(pause)
-    raw = _llm_json(
+
+    raw = _call_groq(
         system=(
             "You are an expert at creating educational flashcards. "
             "Respond ONLY with valid JSON (array), no markdown wrapping."
@@ -327,18 +338,22 @@ def _generate_flashcards(lesson_title: str, lesson_content: str, pause: float) -
         ),
         max_tokens=800,
     )
+
     try:
         cards = json.loads(raw)
         if isinstance(cards, list):
             return cards
     except json.JSONDecodeError:
         pass
+
     return []
 
 
 def _generate_quiz(lesson_title: str, lesson_content: str, pause: float) -> list[dict]:
+    """Generate multiple-choice questions for a lesson."""
     time.sleep(pause)
-    raw = _llm_json(
+
+    raw = _call_groq(
         system=(
             "You are an expert at creating educational MCQs. "
             "Respond ONLY with valid JSON (array), no markdown wrapping."
@@ -356,12 +371,14 @@ def _generate_quiz(lesson_title: str, lesson_content: str, pause: float) -> list
         ),
         max_tokens=800,
     )
+
     try:
         questions = json.loads(raw)
         if isinstance(questions, list):
             return questions
     except json.JSONDecodeError:
         pass
+
     return []
 
 
@@ -372,15 +389,15 @@ def run_agent_chunked(
     num_modules: int = 2,
     num_lessons: int = 2,
     extra_instructions: str = "",
-    on_text: Callable[[str], None] | None = None,
-    on_tool_call: Callable[[str, dict], None] | None = None,
-    on_tool_result: Callable[[str, str], None] | None = None,
-    on_chunk_start: Callable[[int, int], None] | None = None,
+    on_text: Optional[Callable[[str], None]] = None,
+    on_tool_call: Optional[Callable[[str, dict], None]] = None,
+    on_tool_result: Optional[Callable[[str, str], None]] = None,
+    on_chunk_start: Optional[Callable[[int, int], None]] = None,
     publish_to_notion: bool = False,
-    user_id: str | None = None,
+    user_id: Optional[str] = None,
     pause_between_chunks: float = 1.5,
 ) -> str:
-    """Process a course creation request from raw content (chunked mode)."""
+    """Process a course creation request from raw content."""
     if not settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY is not set.")
 
@@ -393,13 +410,19 @@ def run_agent_chunked(
 
     notify("Analysing content to determine optimal structure...")
 
-    structure = _analyze_course_structure(content=content, course_title=course_title, level=level)
+    structure = _analyze_course_structure(
+        content=content,
+        course_title=course_title,
+        level=level,
+    )
     modules_plan = structure["modules"]
-
     total_steps = len(modules_plan) + 1
+
     notify(
         f"Structure defined: {len(modules_plan)} module(s) — "
-        + ", ".join(f"{m['title']} ({m['num_lessons']} lesson(s))" for m in modules_plan)
+        + ", ".join(
+            f"{m['title']} ({m['num_lessons']} lesson(s))" for m in modules_plan
+        )
     )
 
     notify(f"Creating course \"{course_title}\" in database...")
@@ -508,45 +531,45 @@ def run_agent_chunked(
                 notify("  Lesson not created, skipping.")
                 continue
 
-            total_lessons_created += 1
-
-            cards = _generate_flashcards(
-                lesson_title=lesson_title,
-                lesson_content=lesson_content_text,
-                pause=pause_between_chunks,
-            )
-            if cards:
-                if on_tool_call:
-                    on_tool_call("manage_flashcards", {"action": "create", "lesson_id": lesson_id})
-                fc_result = manage_flashcards(action="create", lesson_id=lesson_id, cards=cards, user_id=user_id)
+            # Generate and store flashcards
+            flashcards = _generate_flashcards(lesson_title, lesson_content_text, pause_between_chunks)
+            if flashcards:
+                fc_result = manage_flashcards(
+                    action="create",
+                    lesson_id=lesson_id,
+                    cards=flashcards,
+                )
                 if on_tool_result:
                     on_tool_result("manage_flashcards", json.dumps(fc_result))
 
-            questions = _generate_quiz(
-                lesson_title=lesson_title,
-                lesson_content=lesson_content_text,
-                pause=pause_between_chunks,
-            )
-            if questions:
-                if on_tool_call:
-                    on_tool_call("manage_quiz", {"action": "create", "lesson_id": lesson_id})
-                quiz_result = manage_quiz(action="create", lesson_id=lesson_id, questions=questions, user_id=user_id)
+            # Generate and store quiz questions
+            quiz_questions = _generate_quiz(lesson_title, lesson_content_text, pause_between_chunks)
+            if quiz_questions:
+                quiz_result = manage_quiz(
+                    action="create",
+                    lesson_id=lesson_id,
+                    questions=quiz_questions,
+                )
                 if on_tool_result:
                     on_tool_result("manage_quiz", json.dumps(quiz_result))
 
-    if publish_to_notion:
+            total_lessons_created += 1
+
+    if publish_to_notion and course_id:
         notify("Publishing to Notion...")
         try:
-            notion_result = manage_notion_page(action="publish_course", course_id=course_id)
-            if on_tool_result:
-                on_tool_result("manage_notion_page", json.dumps(notion_result))
-        except Exception as e:
-            notify(f"Notion error: {e}")
+            notion_result = manage_notion_page(
+                action="publish_course",
+                course_id=course_id,
+            )
+            notify(f"Published to Notion: {notion_result.get('pages_created', 0)} pages created.")
+        except Exception as exc:
+            notify(f"Notion publish failed: {exc}")
 
     summary = (
-        f"Course \"{course_title}\" created successfully. "
-        f"{len(module_ids)} module(s), {total_lessons_created} lesson(s), "
-        f"each with flashcards and quiz."
+        f"Course \"{course_title}\" created with {len(module_ids)} module(s) "
+        f"and {total_lessons_created} lesson(s)."
     )
     notify(summary)
+
     return summary

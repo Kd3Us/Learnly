@@ -1,11 +1,12 @@
-"""Application configuration loaded from .env file or Streamlit secrets."""
+"""Application settings loaded from a .env file or Streamlit secrets."""
 import os
 from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _load_streamlit_secrets() -> None:
-    """Inject Streamlit Cloud secrets into os.environ at call time."""
+    """Inject Streamlit Cloud secrets into os.environ before settings are loaded."""
     try:
         import streamlit as st
         for key, value in st.secrets.items():
@@ -45,15 +46,6 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
-
-
-def get_settings() -> Settings:
-    """
-    Return a Settings instance with Streamlit secrets injected.
-    Must be called at render time inside Streamlit pages (not at module level).
-    """
-    _load_streamlit_secrets()
-    return Settings()
 
 
 _load_streamlit_secrets()
