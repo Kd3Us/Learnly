@@ -28,9 +28,13 @@ st.title("Create a course")
 
 if not settings.groq_api_key:
     st.error(
-        "**GROQ_API_KEY missing.**\n\n"
-        "Add your key to the `.env` file:\n```\nGROQ_API_KEY=your_key_here\n```\n\n"
-        "Free key available at [console.groq.com](https://console.groq.com)."
+        "**GROQ_API_KEY manquante.**\n\n"
+        "**En local :** ajoutez la clé dans le fichier `.env` :\n"
+        "```\nGROQ_API_KEY=your_key_here\n```\n\n"
+        "**Sur Streamlit Cloud :** ajoutez la clé dans "
+        "**Settings → Secrets** de votre application :\n"
+        "```toml\nGROQ_API_KEY = \"your_key_here\"\n```\n\n"
+        "Clé gratuite disponible sur [console.groq.com](https://console.groq.com)."
     )
     st.stop()
 
@@ -59,7 +63,6 @@ def _display_generation(agent_fn) -> None:
     current_module: dict = {"label": "", "index": 0, "total": 0}
 
     def on_text(text: str) -> None:
-        # Try to extract total module count from the agent's summary line
         if "module(s)" in text and "—" in text:
             try:
                 total = int(text.split("module(s)")[0].split()[-1])
@@ -91,7 +94,7 @@ def _display_generation(agent_fn) -> None:
             progress_placeholder.caption(f"Generating lesson: *{lesson}*")
 
     def on_tool_result(name: str, result: str) -> None:
-        pass  # Raw tool results are not shown to the user
+        pass
 
     status_placeholder.info("⏳ Generation in progress... (30–90 seconds depending on course size)")
 
@@ -99,79 +102,55 @@ def _display_generation(agent_fn) -> None:
         final_message = agent_fn(on_text, on_tool_call, on_tool_result)
         progress_placeholder.empty()
         status_placeholder.success("✅ Course created successfully!")
-
         if final_message:
-            st.divider()
-            st.subheader("Summary")
-            st.markdown(final_message)
-
-        st.divider()
-        col_quiz, col_fc = st.columns(2)
-        with col_quiz:
-            if st.button("Take the quiz", type="primary", use_container_width=True):
-                st.switch_page("app.py")
-        with col_fc:
-            if st.button("Study flashcards", use_container_width=True):
-                st.switch_page("app.py")
-
-    except RuntimeError as e:
+            st.info(final_message)
+        st.balloons()
+        st.page_link("app.py", label="← Back to home to view your course")
+    except Exception as exc:
         progress_placeholder.empty()
-        status_placeholder.error(str(e))
-    except Exception as e:
-        progress_placeholder.empty()
-        status_placeholder.error(f"An error occurred: {e}")
+        status_placeholder.error(f"Generation failed: {exc}")
 
 
 # ---------------------------------------------------------------------------
-# Main form
+# Form
 # ---------------------------------------------------------------------------
-st.caption("Paste your content or upload a PDF. The app structures the course and generates flashcards and quiz.")
 
-course_title = st.text_input(
-    "Course title *",
-    placeholder="e.g. Thermodynamics course",
-    key="course_title_content",
-)
-level_c = st.selectbox(
-    "Level",
-    options=["Beginner", "Intermediate", "Advanced"],
-    key="level_content",
-)
-input_method = st.radio(
-    "How to provide content?",
-    options=["Paste text", "Upload PDF"],
-    horizontal=True,
-    key="input_method_content",
-)
-
-pasted_text = ""
-uploaded_pdf = None
-
-if input_method == "Paste text":
-    pasted_text = st.text_area(
-        "Course content *",
-        placeholder="Paste your notes, slides, or any other content here...",
-        height=300,
-        key="pasted_text_content",
+with st.form("generate_form"):
+    course_title = st.text_input(
+        "Course title",
+        placeholder="e.g. Introduction to Machine Learning",
     )
-else:
-    uploaded_pdf = st.file_uploader("PDF file *", type=["pdf"], key="pdf_uploader_content")
 
-extra_c = st.text_area(
-    "Additional instructions (optional)",
-    placeholder="e.g. focus on formulas, add practical examples...",
-    height=80,
-    key="extra_content",
-)
-publish_notion_c = st.checkbox(
-    "Publish to Notion after generation",
-    value=False,
-    disabled=not settings.notion_api_key,
-    key="notion_content",
-)
-launch_content = st.button("Launch", type="primary", use_container_width=True, key="launch_content")
+    level_c = st.selectbox("Level", list(level_map.keys()))
 
-if launch_content:
+    input_method = st.radio(
+        "Content source",
+        ["Paste text", "Upload PDF"],
+        horizontal=True,
+    )
+
+    pasted_text = st.text_area(
+        "Paste your content here",
+        height=250,
+        placeholder="Paste the text you want to turn into a course...",
+    )
+
+    uploaded_pdf = st.file_uploader("Upload a PDF", type=["pdf"])
+
+    extra_c = st.text_area(
+        "Additional instructions (optional)",
+        height=80,
+        placeholder="e.g. Focus on practical examples, include code snippets...",
+    )
+
+    publish_notion_c = st.checkbox(
+        "Publish to Notion after generation",
+        value=bool(st.session_state.get("notion_token")),
+    )
+
+    submitted = st.form_submit_button("Generate course", type="primary", use_container_width=True)
+
+if submitted:
     if not course_title.strip():
         st.warning("Please enter a course title.")
         st.stop()
