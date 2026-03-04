@@ -14,7 +14,6 @@ import json
 import io
 import streamlit as st
 from database import init_db
-from config import get_settings
 from auth_guard import require_auth, render_sidebar_user, current_user_id
 
 init_db()
@@ -26,10 +25,31 @@ render_sidebar_user()
 
 st.title("Create a course")
 
-# Read settings fresh at render time so Streamlit secrets are available
-_settings = get_settings()
+# ---------------------------------------------------------------------------
+# Résolution de la clé Groq : st.secrets en priorité, sinon os.environ
+# ---------------------------------------------------------------------------
+def _get_groq_api_key() -> str | None:
+    try:
+        key = st.secrets.get("GROQ_API_KEY") or st.secrets.get("groq_api_key")
+        if key:
+            return key
+    except Exception:
+        pass
+    return os.environ.get("GROQ_API_KEY")
 
-if not _settings.groq_api_key:
+def _get_groq_model() -> str:
+    try:
+        model = st.secrets.get("GROQ_MODEL") or st.secrets.get("groq_model")
+        if model:
+            return model
+    except Exception:
+        pass
+    return os.environ.get("GROQ_MODEL", "llama3-70b-8192")
+
+GROQ_API_KEY = _get_groq_api_key()
+GROQ_MODEL = _get_groq_model()
+
+if not GROQ_API_KEY:
     st.error(
         "**GROQ_API_KEY manquante.**\n\n"
         "**En local :** ajoutez la clé dans le fichier `.env` :\n"
@@ -40,6 +60,10 @@ if not _settings.groq_api_key:
         "Clé gratuite disponible sur [console.groq.com](https://console.groq.com)."
     )
     st.stop()
+
+# Injecter dans os.environ pour que agent.py et config.py les trouvent
+os.environ["GROQ_API_KEY"] = GROQ_API_KEY
+os.environ["GROQ_MODEL"] = GROQ_MODEL
 
 CHUNK_THRESHOLD = 4000
 

@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _load_streamlit_secrets() -> None:
-    """Inject Streamlit secrets into environment variables at call time."""
+    """Inject Streamlit Cloud secrets into os.environ at call time."""
     try:
         import streamlit as st
         for key, value in st.secrets.items():
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     groq_api_key: Optional[str] = None
     groq_model: str = "llama3-70b-8192"
 
-    # Notion (optional — only needed for notion_tool)
+    # Notion (optional)
     notion_api_key: Optional[str] = None
     notion_root_page_id: Optional[str] = None
 
@@ -49,14 +49,12 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     """
-    Return a fresh Settings instance with Streamlit secrets injected.
-
-    Always call this inside Streamlit pages so that st.secrets is available.
-    The module-level `settings` singleton is reserved for non-Streamlit contexts
-    (database.py, tests, CLI tools).
+    Return a Settings instance with Streamlit secrets injected.
+    Must be called at render time inside Streamlit pages (not at module level).
     """
     _load_streamlit_secrets()
     return Settings()
 
 
+_load_streamlit_secrets()
 settings = Settings()
