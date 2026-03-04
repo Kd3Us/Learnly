@@ -4,26 +4,19 @@ from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _inject_streamlit_secrets() -> None:
-    """Copy Streamlit secrets into environment variables (Streamlit Cloud support)."""
+def _load_streamlit_secrets() -> None:
+    """Inject Streamlit secrets into environment variables at call time."""
     try:
         import streamlit as st
-        secrets = st.secrets
-
-        for key, value in secrets.items():
+        for key, value in st.secrets.items():
             if isinstance(value, str):
-                # Force override (setdefault ignores existing keys, causing the bug)
                 os.environ[key.upper()] = value
             elif hasattr(value, "items"):
-                # Handle nested TOML sections, e.g. [groq] / api_key = "..."
                 for k, v in value.items():
                     if isinstance(v, str):
                         os.environ[k.upper()] = v
     except Exception:
         pass
-
-
-_inject_streamlit_secrets()
 
 
 class Settings(BaseSettings):
@@ -39,7 +32,7 @@ class Settings(BaseSettings):
 
     # Groq (required for content generation)
     groq_api_key: Optional[str] = None
-    groq_model: str = "llama-3.1-8b-instant"
+    groq_model: str = "llama3-70b-8192"
 
     # Notion (optional — only needed for notion_tool)
     notion_api_key: Optional[str] = None
@@ -52,6 +45,11 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
+
+
+def get_settings() -> Settings:
+    _load_streamlit_secrets()
+    return Settings()
 
 
 settings = Settings()

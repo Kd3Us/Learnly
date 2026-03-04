@@ -14,7 +14,7 @@ import json
 import io
 import streamlit as st
 from database import init_db
-from config import settings
+from config import get_settings
 from auth_guard import require_auth, render_sidebar_user, current_user_id
 
 init_db()
@@ -26,7 +26,10 @@ render_sidebar_user()
 
 st.title("Create a course")
 
-if not settings.groq_api_key:
+# Read settings fresh at render time so Streamlit secrets are available
+_settings = get_settings()
+
+if not _settings.groq_api_key:
     st.error(
         "**GROQ_API_KEY manquante.**\n\n"
         "**En local :** ajoutez la clé dans le fichier `.env` :\n"
