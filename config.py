@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     notion_root_page_id: Optional[str] = None
 
     # Application
-    app_env: str = "development"
+    app_env: str = "production"
     log_level: str = "INFO"
 
     @property
