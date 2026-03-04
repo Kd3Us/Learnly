@@ -14,7 +14,7 @@ from typing import Callable
 
 from groq import Groq
 
-from config import get_settings
+from config import settings
 from tools import (
     TOOL_SCHEMAS,
     manage_curriculum,
@@ -32,11 +32,7 @@ _TOOL_FORMAT_INSTRUCTION = (
 
 
 def _load_instructions() -> str:
-    base = (
-        _PROMPT_PATH.read_text(encoding="utf-8")
-        if _PROMPT_PATH.exists()
-        else "Tu es un tuteur pédagogique expert."
-    )
+    base = _PROMPT_PATH.read_text(encoding="utf-8") if _PROMPT_PATH.exists() else "Tu es un tuteur pédagogique expert."
     return _TOOL_FORMAT_INSTRUCTION + base
 
 
@@ -84,15 +80,14 @@ def _execute_tool(name: str, arguments: dict) -> str:
 
 def _llm_json(prompt: str, system: str | None = None, max_tokens: int = 1500) -> str:
     """Simple LLM call returning raw text. Used for JSON generation without tool_calls."""
-    cfg = get_settings()
-    client = Groq(api_key=cfg.groq_api_key)
+    client = Groq(api_key=settings.groq_api_key)
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
     response = client.chat.completions.create(
-        model=cfg.groq_model,
+        model=settings.groq_model,
         messages=messages,
         max_tokens=max_tokens,
         temperature=0.3,
@@ -112,11 +107,10 @@ def run_agent(
     publish_to_notion: bool = False,
 ) -> str:
     """Process a course creation request (direct mode)."""
-    cfg = get_settings()
-    if not cfg.groq_api_key:
+    if not settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY is not set.")
 
-    client = Groq(api_key=cfg.groq_api_key)
+    client = Groq(api_key=settings.groq_api_key)
     instructions = _load_instructions()
 
     notion_instruction = ""
@@ -136,7 +130,7 @@ def run_agent(
 
     for _ in range(max_iterations):
         response = client.chat.completions.create(
-            model=cfg.groq_model,
+            model=settings.groq_model,
             messages=messages,
             tools=_GROQ_TOOL_SCHEMAS,
             tool_choice="auto",
@@ -255,8 +249,7 @@ def _generate_lesson_content(
     """Generate structured lesson content from a content chunk."""
     time.sleep(pause)
 
-    cfg = get_settings()
-    client = Groq(api_key=cfg.groq_api_key)
+    client = Groq(api_key=settings.groq_api_key)
     messages = [
         {
             "role": "system",
@@ -285,7 +278,7 @@ def _generate_lesson_content(
     ]
 
     response = client.chat.completions.create(
-        model=cfg.groq_model,
+        model=settings.groq_model,
         messages=messages,
         max_tokens=3000,
         temperature=0.3,
@@ -388,8 +381,7 @@ def run_agent_chunked(
     pause_between_chunks: float = 1.5,
 ) -> str:
     """Process a course creation request from raw content (chunked mode)."""
-    cfg = get_settings()
-    if not cfg.groq_api_key:
+    if not settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY is not set.")
 
     def notify(msg: str) -> None:
@@ -518,22 +510,18 @@ def run_agent_chunked(
 
             total_lessons_created += 1
 
-            # Generate flashcards
-            flashcards = _generate_flashcards(
+            cards = _generate_flashcards(
                 lesson_title=lesson_title,
                 lesson_content=lesson_content_text,
                 pause=pause_between_chunks,
             )
-            if flashcards:
+            if cards:
                 if on_tool_call:
                     on_tool_call("manage_flashcards", {"action": "create", "lesson_id": lesson_id})
-                fc_result = manage_flashcards(
-                    action="create", lesson_id=lesson_id, cards=flashcards
-                )
+                fc_result = manage_flashcards(action="create", lesson_id=lesson_id, cards=cards, user_id=user_id)
                 if on_tool_result:
                     on_tool_result("manage_flashcards", json.dumps(fc_result))
 
-            # Generate quiz
             questions = _generate_quiz(
                 lesson_title=lesson_title,
                 lesson_content=lesson_content_text,
@@ -542,24 +530,23 @@ def run_agent_chunked(
             if questions:
                 if on_tool_call:
                     on_tool_call("manage_quiz", {"action": "create", "lesson_id": lesson_id})
-                quiz_result = manage_quiz(
-                    action="create", lesson_id=lesson_id, questions=questions
-                )
+                quiz_result = manage_quiz(action="create", lesson_id=lesson_id, questions=questions, user_id=user_id)
                 if on_tool_result:
                     on_tool_result("manage_quiz", json.dumps(quiz_result))
 
-    # Publish to Notion if requested
-    if publish_to_notion and course_id:
+    if publish_to_notion:
+        notify("Publishing to Notion...")
         try:
-            if on_tool_call:
-                on_tool_call("manage_notion_page", {"action": "publish_course", "course_id": course_id})
             notion_result = manage_notion_page(action="publish_course", course_id=course_id)
             if on_tool_result:
                 on_tool_result("manage_notion_page", json.dumps(notion_result))
-        except Exception as exc:
-            notify(f"Notion publishing failed: {exc}")
+        except Exception as e:
+            notify(f"Notion error: {e}")
 
-    return (
-        f"Course \"{course_title}\" created with {len(module_ids)} module(s) "
-        f"and {total_lessons_created} lesson(s)."
+    summary = (
+        f"Course \"{course_title}\" created successfully. "
+        f"{len(module_ids)} module(s), {total_lessons_created} lesson(s), "
+        f"each with flashcards and quiz."
     )
+    notify(summary)
+    return summary
