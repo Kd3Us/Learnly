@@ -1,38 +1,24 @@
 """SQLAlchemy engine, session management, and DB initialisation."""
-import os
 from contextlib import contextmanager
 from typing import Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
+from config import get_database_url
 from models import Base
 
 
-def _get_database_url() -> str:
-    url = os.environ.get("DATABASE_URL")
-    if url:
-        return url
-    raise RuntimeError(
-        "DATABASE_URL is not set. "
-        "Add it as a root-level key in your Streamlit secrets."
-    )
-
-
 def _build_engine():
+    """Build a new engine reading DATABASE_URL at call time."""
     return create_engine(
-        _get_database_url(),
-        echo=(os.environ.get("APP_ENV") == "development"),
+        get_database_url(),
         pool_pre_ping=True,
     )
 
 
 def init_db() -> None:
-    """Create all tables. Safe to call multiple times (idempotent).
-    
-    Must be called inside a Streamlit execution context (inside a function
-    or decorated with @st.cache_resource), never at module level.
-    """
+    """Create all tables. Safe to call multiple times (idempotent)."""
     engine = _build_engine()
     Base.metadata.create_all(bind=engine)
     engine.dispose()
