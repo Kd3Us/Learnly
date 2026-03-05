@@ -10,38 +10,32 @@ from models import Base
 
 
 def _get_database_url() -> str:
-    """
-    Read DATABASE_URL at call time directly from os.environ.
-
-    Streamlit Cloud automatically injects root-level secrets as environment
-    variables before any page code runs, so os.environ is the most reliable
-    source — no singleton, no lazy cache, no st.secrets workaround needed.
-
-    Raises RuntimeError if DATABASE_URL is not set.
-    """
     url = os.environ.get("DATABASE_URL")
     if url:
         return url
     raise RuntimeError(
         "DATABASE_URL is not set. "
-        "Add it as a root-level key in your Streamlit secrets or "
-        "as an environment variable."
+        "Add it as a root-level key in your Streamlit secrets."
     )
 
 
-def _make_engine():
-    url = _get_database_url()
-    return create_engine(url, echo=(os.environ.get("APP_ENV") == "development"))
-
-
-def _make_session_factory(engine):
-    return sessionmaker(autocommit=False, autoflush=False, bind=engine)
+def _build_engine():
+    return create_engine(
+        _get_database_url(),
+        echo=(os.environ.get("APP_ENV") == "development"),
+        pool_pre_ping=True,
+    )
 
 
 def init_db() -> None:
-    """Create all tables. Safe to call multiple times (idempotent)."""
-    engine = _make_engine()
+    """Create all tables. Safe to call multiple times (idempotent).
+    
+    Must be called inside a Streamlit execution context (inside a function
+    or decorated with @st.cache_resource), never at module level.
+    """
+    engine = _build_engine()
     Base.metadata.create_all(bind=engine)
+    engine.dispose()
 
 
 @contextmanager
@@ -53,8 +47,8 @@ def get_db() -> Generator[Session, None, None]:
         with get_db() as db:
             db.add(some_object)
     """
-    engine = _make_engine()
-    SessionLocal = _make_session_factory(engine)
+    engine = _build_engine()
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db = SessionLocal()
     try:
         yield db
