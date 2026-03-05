@@ -1,4 +1,4 @@
-"""Application settings loaded from a .env file or Streamlit secrets."""
+"""Application settings loaded from environment variables or Streamlit secrets."""
 import os
 from typing import Optional
 
@@ -28,9 +28,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Database
-    database_url: str = "sqlite:///./learn_ai.db"
-
     # Groq (required for content generation)
     groq_api_key: Optional[str] = None
     groq_model: str = "llama3-70b-8192"
@@ -42,10 +39,6 @@ class Settings(BaseSettings):
     # Application
     app_env: str = "production"
     log_level: str = "INFO"
-
-    @property
-    def is_sqlite(self) -> bool:
-        return self.database_url.startswith("sqlite")
 
 
 _load_streamlit_secrets()
