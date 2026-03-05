@@ -657,7 +657,7 @@ def run_agent_chunked(
             if cards:
                 if on_tool_call:
                     on_tool_call("manage_flashcards", {"action": "create", "lesson_id": lesson_id})
-                fc_result = manage_flashcards(action="create", lesson_id=lesson_id, cards=cards)
+                fc_result = manage_flashcards(action="create", lesson_id=lesson_id, cards=cards, user_id=user_id)
                 if on_tool_result:
                     on_tool_result("manage_flashcards", json.dumps(fc_result))
 
@@ -667,7 +667,7 @@ def run_agent_chunked(
                 if on_tool_call:
                     on_tool_call("manage_quiz", {"action": "create", "lesson_id": lesson_id})
                 quiz_result = manage_quiz(
-                    action="create", lesson_id=lesson_id, questions=questions
+                    action="create", lesson_id=lesson_id, questions=questions, user_id=user_id
                 )
                 if on_tool_result:
                     on_tool_result("manage_quiz", json.dumps(quiz_result))
